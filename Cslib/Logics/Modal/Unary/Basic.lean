@@ -38,9 +38,22 @@ theorem Satisfies.dynDiamond_iff_exists {m : Model World τ Atom}
     {φ : Proposition τ Atom} : ⇓Modal[m,w ⊨ d⟨a⟩φ] ↔
       ∃ w', m.toFrame.diagonal a w w' ∧ ⇓Modal[m,w' ⊨ φ] := by grind
 
+/-- `simp`-compatible variant of `dynDiamond_iff_exists` with `no_index` to avoid
+discrimination-tree mismatch for concrete type `Label` instead of `τ.A`. -/
+theorem Satisfies.dynDiamond_iff_exists_no_index {m : Model World τ Atom}
+    {φ : Proposition τ Atom} : ⇓Modal[m,w ⊨ no_index (d⟨a⟩φ)] ↔
+      ∃ w', m.toFrame.diagonal a w w' ∧ ⇓Modal[m,w' ⊨ φ] :=
+  dynDiamond_iff_exists
+
 @[modal =]
 theorem Satisfies.dynBox_iff_forall {m : Model World τ Atom} {φ : Proposition τ Atom} :
     ⇓Modal[m,w ⊨ d[a]φ] ↔ ∀ w', m.toFrame.diagonal a w w' → ⇓Modal[m,w' ⊨ φ] := by grind
+
+/-- `simp`-compatible variant of `dynBox_iff_forall` with `no_index` to avoid
+discrimination-tree mismatch for concrete type `Label` instead of `τ.A`. -/
+theorem Satisfies.dynBox_iff_forall_no_index {m : Model World τ Atom} {φ : Proposition τ Atom} :
+    ⇓Modal[m,w ⊨ no_index (d[a]φ)] ↔ ∀ w', m.toFrame.diagonal a w w' → ⇓Modal[m,w' ⊨ φ] :=
+  dynBox_iff_forall
 
 /-- If two operators `op₁` and `op₂` have inverse diagonal relations, then `φ → d[op₁](d⟨op₂⟩φ)`. -/
 theorem Satisfies.dynBox_dynDiamond_diagonalInverse₁ {m : Model World τ Atom}

@@ -53,4 +53,43 @@ example {State : Type u} {m : HML.Model State Label Atom} {s : State} {μ : Labe
 
 end LogicalEquivalence
 
+section SimpMkUnary
+
+variable {State Label Atom : Type*} {m : HML.Model State Label Atom} {s : State}
+  {a b : Label} {φ : HML.Proposition Label Atom}
+
+/-! These tests verify that the `no_index` simp lemmas in the general modal
+framework (`Cslib.Logics.Modal.Unary.Basic`) apply to concrete `mkUnary`
+signatures such as HML, whose action type is `Label` rather than `τ.A`. -/
+
+-- `Satisfies.dynDiamond_iff_exists_no_index` (general framework, not HML-specific)
+-- works with `simp` for HML's concrete action type `Label`.
+example : ⇓HML[m,s ⊨ d⟨a⟩φ] ↔ ∃ s', m.toModal.toFrame.diagonal a s s' ∧ ⇓HML[m,s' ⊨ φ] := by
+  -- simp only [Satisfies.dynDiamond_iff_exists] -- does not work
+  simp only [Satisfies.dynDiamond_iff_exists_no_index] -- does work
+
+-- Same for nested diamonds.
+example : ⇓HML[m,s ⊨ d⟨a⟩(d⟨b⟩φ)] ↔
+    ∃ s', m.toModal.toFrame.diagonal a s s' ∧
+      ∃ s'', m.toModal.toFrame.diagonal b s' s'' ∧ ⇓HML[m,s'' ⊨ φ] := by
+  simp only [Satisfies.dynDiamond_iff_exists_no_index]
+
+-- With additional HML-specific simp lemmas, `simp` fully expands to `m.lts.Tr` transitions.
+example : ⇓HML[m,s ⊨ d⟨a⟩(d⟨b⟩φ)] ↔
+    ∃ s', m.lts.Tr s a s' ∧ ∃ s'', m.lts.Tr s' b s'' ∧ ⇓HML[m,s'' ⊨ φ] := by
+  simp only [Satisfies.dynDiamond_iff_exists_no_index, HML.Model.toModal_toFrame,
+    LTS.toFrame_diagonal_iff_tr]
+
+-- `Satisfies.dynBox_iff_forall_no_index` (general framework) also works for HML.
+example : ⇓HML[m,s ⊨ d[a]φ] ↔ ∀ s', m.toModal.toFrame.diagonal a s s' → ⇓HML[m,s' ⊨ φ] := by
+  simp only [Satisfies.dynBox_iff_forall_no_index]
+
+-- Nested box-diamond combinations using both general-framework lemmas.
+example : ⇓HML[m,s ⊨ d[a](d⟨b⟩φ)] ↔
+    ∀ s', m.toModal.toFrame.diagonal a s s' →
+      ∃ s'', m.toModal.toFrame.diagonal b s' s'' ∧ ⇓HML[m,s'' ⊨ φ] := by
+  simp only [Satisfies.dynBox_iff_forall_no_index, Satisfies.dynDiamond_iff_exists_no_index]
+
+end SimpMkUnary
+
 end CslibTests

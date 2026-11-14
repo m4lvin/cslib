@@ -235,4 +235,24 @@ def Program.induction
   Program.inductionOnShape action test seq union star a.shape a.tests fun t =>
     Formula.induction atom false not or diamond action test seq union star (a.tests t)
 
+/-- Parallel principle for PDL formulas and programs.
+Result is a `PProd` because `Prod` only works on `Type u` and not on `Sort v`. -/
+def mutualInduction
+    {motive_1 : Formula Label Atom → Sort w}
+    {motive_2 : Program Label Atom → Sort w}
+    (atom : ∀ p : Atom, motive_1 (.atom p))
+    (false : motive_1 ⊥)
+    (not : ∀ φ, motive_1 φ → motive_1 (¬φ))
+    (or : ∀ φ ψ, motive_1 φ → motive_1 ψ → motive_1 (φ ∨ ψ))
+    (diamond : ∀ a φ, motive_2 a → motive_1 φ → motive_1 (d⟨a⟩φ))
+    (action : ∀ n, motive_2 (PDL.action n))
+    (test : ∀ ψ, motive_1 ψ → motive_2 (PDL.test ψ))
+    (seq : ∀ a b, motive_2 a → motive_2 b → motive_2 (PDL.seq a b))
+    (union : ∀ a b, motive_2 a → motive_2 b → motive_2 (PDL.union a b))
+    (star : ∀ a, motive_2 a → motive_2 (PDL.star a))
+    : (∀ φ : Formula Label Atom, motive_1 φ) ×' (∀ a : Program Label Atom, motive_2 a) :=
+  ⟨ fun φ => Formula.induction atom false not or diamond action test seq union star φ
+  , fun a => Program.inductionOnShape action test seq union star a.shape a.tests fun t =>
+      Formula.induction atom false not or diamond action test seq union star (a.tests t) ⟩
+
 end Cslib.Logic.Modal.PDL

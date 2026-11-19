@@ -55,21 +55,14 @@ theorem Model.toModal_toFrame (m : Model State Label Atom) :
 /- ## PDL formulas as unary modal formulas -/
 
 open Cslib.Logic.Modal in
-/-- View a PDL formula over the unary signature with one modality per program.
-
-For example the PDL formula `⟨a ∪ ?⊥⟩p` in our `Formula` type is given by
-applying `⟨a ∪ ?_⟩_` to the two inputs `⊥` and `p`, whereas the result of
-`toUnary` can be seen as applying `⟨a ∪ ?⊥⟩` to `p`.
-
-TODO: Make a `Coe` for this and hide it by default in some way?
--/
+/-- View a PDL formula over the unary signature with one modality per program. -/
 def Formula.toUnary :
     Formula Label Atom → Proposition (PFunctor.mkUnary (Program Label Atom)) Atom
   | .atom p => .atom p
   | .false => .false
   | .not φ => .not (toUnary φ)
   | .or φ ψ => .or (toUnary φ) (toUnary ψ)
-  | .triangle s φs => .triangle ⟨s, φs ∘ Sum.inl⟩ (fun _ => toUnary (φs (.inr ())))
+  | .diamond a φ => .triangle a (fun _ => toUnary φ)
 
 @[scoped grind =, modal =]
 theorem Formula.toUnary_atom (p : Atom) :
@@ -99,6 +92,9 @@ theorem Formula.toUnary_imp (φ ψ : Formula Label Atom) :
 @[scoped grind =, modal =]
 theorem Formula.toUnary_iff (φ ψ : Formula Label Atom) :
     (φ ↔ ψ).toUnary = (φ.toUnary ↔ ψ.toUnary) := rfl
+
+theorem Formula.toUnary_diamond (a : Program Label Atom) (φ : Formula Label Atom) :
+    (Formula.diamond a φ).toUnary = d⟨a⟩(φ.toUnary) := rfl
 
 @[scoped grind =, modal =]
 theorem Formula.toUnary_dynDiamond (a : Program Label Atom) (φ : Formula Label Atom) :
@@ -159,12 +155,14 @@ attribute [modal →] Model.IsStandard.regular
 
 An `LTS` labelled by atomic programs together with a valuation can be extended to a standard
 model. Because the transitions for tests depend on the truth of formulas, which in turn depends
-on the transitions for programs, we define the transition relation of shapes (`Shape.rel`) and
-the truth of formulas (`Formula.eval`) together.
+on the transitions for programs, we define the transition relation of programs
+(`Program.eval`) and the truth of formulas (`Formula.eval`) mutually.
 -/
 
 /-- The transition relation of a program shape in the standard model over `lts`,
-given the truth sets of the formulas at its test positions. -/
+given the truth sets of the formulas at its test positions.
+UNUSED - delete this?
+-/
 def Shape.rel (lts : LTS State Label) :
     (s : Shape Label) → (Tests s → State → Prop) → State → State → Prop
   | .action n, _, w, w' => lts.Tr w n w'
@@ -173,21 +171,32 @@ def Shape.rel (lts : LTS State Label) :
   | .union a b, sat, w, w' => a.rel lts (sat ∘ .inl) w w' ∨ b.rel lts (sat ∘ .inr) w w'
   | .star a, sat, w, w' => Relation.ReflTransGen (a.rel lts sat) w w'
 
-/-- Truth of a formula in the standard model over `lts` with valuation `val`. -/
-def Formula.eval (lts : LTS State Label) (val : State → Atom → Prop) :
-    Formula Label Atom → State → Prop
-  | .atom p, w => val w p
-  | .false, _ => False
-  | .not φ, w => ¬ eval lts val φ w
-  | .or φ ψ, w => eval lts val φ w ∨ eval lts val ψ w
-  | .triangle s φs, w => ∃ w', s.rel lts (fun t => eval lts val (φs (.inl t))) w w' ∧
-      eval lts val (φs (.inr ())) w'
+mutual
+  /-- The transition relation of a program in the standard model over `lts` with valuation
+  `val`. -/
+  def Program.eval (lts : LTS State Label) (val : State → Atom → Prop) :
+      Program Label Atom → State → State → Prop
+    | .action n, w, w' => lts.Tr w n w'
+    | .test ψ, w, w' => w = w' ∧ Formula.eval lts val ψ w
+    | .seq a b, w, w' => ∃ u, Program.eval lts val a w u ∧ Program.eval lts val b u w'
+    | .union a b, w, w' => Program.eval lts val a w w' ∨ Program.eval lts val b w w'
+    | .star a, w, w' => Relation.ReflTransGen (Program.eval lts val a) w w'
+
+  /-- Truth of a formula in the standard model over `lts` with valuation `val`. -/
+  def Formula.eval (lts : LTS State Label) (val : State → Atom → Prop) :
+      Formula Label Atom → State → Prop
+    | .atom p, w => val w p
+    | .false, _ => False
+    | .not φ, w => ¬ Formula.eval lts val φ w
+    | .or φ ψ, w => Formula.eval lts val φ w ∨ Formula.eval lts val ψ w
+    | .diamond a φ, w => ∃ w', Program.eval lts val a w w' ∧ Formula.eval lts val φ w'
+end
 
 /-- Extend an `LTS` over atomic programs to all programs, using the valuation `val`
 to decide which tests succeed. -/
 def _root_.Cslib.LTS.toRegular (lts : LTS State Label) (val : State → Atom → Prop) :
     LTS State (Program Label Atom) where
-  Tr w a w' := a.shape.rel lts (fun t => Formula.eval lts val (a.tests t)) w w'
+  Tr w a w' := Program.eval lts val a w w'
 
 theorem _root_.Cslib.LTS.toRegular_isRegularPDL (lts : LTS State Label)
     (val : State → Atom → Prop) : (lts.toRegular val).IsRegularPDL where
@@ -209,7 +218,7 @@ theorem Model.fromLTS_judgement_iff (lts : LTS State Label) (val : State → Ato
   | not φ ih => exact not_congr (ih w)
   | or φ ψ ihφ ihψ => exact or_congr (ihφ w) (ihψ w)
   | diamond a φ _ ih =>
-    rw [judgement, Formula.toUnary_dynDiamond, Satisfies.dynDiamond_iff_exists]
+    rw [judgement, Formula.toUnary_diamond, Satisfies.dynDiamond_iff_exists]
     exact exists_congr fun w' => and_congr Iff.rfl (ih w')
   | action | test | seq | union | star => trivial
 

@@ -16,10 +16,10 @@ PDL is about the behaviour of programs and originates from [FischerLadner1979].
 It extends Hennessy-Milner Logic from `Cslib.Logics.HML.Basic` with a `test`
 operator and three ways to combine programs: `seq`, `union` and `star`.
 
-We define a PDL `Program` as a `Shape` plus a map from its test positions to formulas.
-This avoids a mutual or nested inductive, and allows us to define a `PFunctor` that
-we can use as the `signature` to define `Formula` via `Cslib.Logic.Modal.Proposition`.
-This is inspired by the "pre" placeholders [Koole2026] uses for dynamic algebras.
+`Formula` and `Program` are defined as a mutual inductive.  Programs are also viewed as
+a `Shape` plus a map from its test positions to formulas, which gives the modal signature
+used by `Cslib.Logic.Modal.Proposition`.  The correspondence between the two views is an
+equivalence, `Formula.equivProposition`.
 
 NOTES:
 
@@ -44,23 +44,21 @@ NOTES:
 
 namespace Cslib.Logic.Modal.PDL
 
-universe u v w
-
-variable (Label : Type u)
+universe u v
 
 /-! ## Syntax -/
 
 /-- The shape of a PDL program, where test formulas are not yet provided. -/
-inductive Shape where
+inductive Shape (Label : Type u) where
   | action (name : Label)
   | test
-  | seq (a b : Shape)
-  | union (a b : Shape)
-  | star (a : Shape)
+  | seq (a b : Shape Label)
+  | union (a b : Shape Label)
+  | star (a : Shape Label)
   deriving DecidableEq, Repr
 
-/-- As many copies of `Unit` as there are test in the given `Shape`. -/
-def Tests {Label} : Shape Label → Type
+/-- As many copies of `Unit` as there are tests in the given `Shape`. -/
+abbrev Tests {Label : Type u} : Shape Label → Type
   | .action _ => Empty
   | .test => Unit
   | .seq a b => Tests a ⊕ Tests b
@@ -68,48 +66,120 @@ def Tests {Label} : Shape Label → Type
   | .star a => Tests a
 
 /-- The modal signature for PDL. -/
-abbrev signature : PFunctor :=
+abbrev signature (Label : Type u) : PFunctor :=
   ⟨Shape Label, fun a => Tests a ⊕ Unit⟩
 
-variable (Atom : Type v)
+mutual
+/-- Formulas of Propositional Dynamic Logic. -/
+inductive Formula (Label : Type u) (Atom : Type v) where
+  /-- Atomic proposition. -/
+  | atom (p : Atom)
+  /-- Falsehood. -/
+  | false
+  /-- Negation. -/
+  | not (φ : Formula Label Atom)
+  /-- Disjunction. -/
+  | or (φ₁ φ₂ : Formula Label Atom)
+  /-- Diamond modality: after some execution of `a`, `φ` holds. -/
+  | diamond (a : Program Label Atom) (φ : Formula Label Atom)
 
-/-- Formulas of Propositional Dynamic Logic. Note that this is defined via `Shape` and `Tests`.
-If you want mutual recursion, use `Formula.induction` and `Program.induction`. -/
-abbrev Formula := Cslib.Logic.Modal.Proposition (signature Label) Atom
+/-- A PDL program. -/
+inductive Program (Label : Type u) (Atom : Type v) where
+  /-- Atomic program. -/
+  | action (name : Label)
+  /-- Test program. -/
+  | test (ψ : Formula Label Atom)
+  /-- Sequential composition of programs. -/
+  | seq (a b : Program Label Atom)
+  /-- Non-deterministic choice between two programs. -/
+  | union (a b : Program Label Atom)
+  /-- Kleene star to iterate a program any number of times (including 0). -/
+  | star (a : Program Label Atom)
+end
 
-/-- A PDL program, internally represented by a `Shape` and a function
-that maps the `Tests` positions in the shape to actual Formulas. -/
-structure Program where
-  /-- The shape of the program, including `Shape.test`-placeholders -/
-  shape : Shape Label
-  /-- The actual test formulas, one for each placeholder. -/
-  tests : Tests shape → Formula Label Atom
-
-variable {Label Atom}
+variable {Label : Type u} {Atom : Type v}
 
 /-- An atomic program. -/
-def action (name : Label) : Program Label Atom :=
-  ⟨.action name, Empty.elim⟩
+abbrev action (name : Label) : Program Label Atom := .action name
 
 /-- Test program. -/
-def test (ψ : Formula Label Atom) : Program Label Atom :=
-  ⟨.test, fun _ => ψ⟩
+abbrev test (ψ : Formula Label Atom) : Program Label Atom := .test ψ
 
 /-- Sequential composition of programs. -/
-def seq (a b : Program Label Atom) : Program Label Atom :=
-  ⟨.seq a.shape b.shape, Sum.elim a.tests b.tests⟩
+abbrev seq (a b : Program Label Atom) : Program Label Atom := .seq a b
 
 /-- Non-deterministic choice between two programs. -/
-def union (a b : Program Label Atom) : Program Label Atom :=
-  ⟨.union a.shape b.shape, Sum.elim a.tests b.tests⟩
+abbrev union (a b : Program Label Atom) : Program Label Atom := .union a b
 
 /-- Kleene star to iterate a program any number of times (including 0). -/
-def star (a : Program Label Atom) : Program Label Atom :=
-  ⟨.star a.shape, a.tests⟩
+abbrev star (a : Program Label Atom) : Program Label Atom := .star a
+
+/-- The shape of a program, forgetting its test formulas. -/
+def Program.shape (a : Program Label Atom) : Shape Label :=
+  match a with
+  | .action n => .action n
+  | .test _ => .test
+  | .seq a b => .seq a.shape b.shape
+  | .union a b => .union a.shape b.shape
+  | .star a => .star a.shape
+
+/-- The test formulas of a program, one for each `Shape.test` placeholder. -/
+def Program.tests (a : Program Label Atom) : Tests a.shape → Formula Label Atom :=
+  match a with
+  | .action _ => Empty.elim
+  | .test ψ => fun _ => ψ
+  | .seq a b => Sum.elim a.tests b.tests
+  | .union a b => Sum.elim a.tests b.tests
+  | .star a => a.tests
+
+/-! ## Propositional connectives -/
+
+instance : Coe Atom (Formula Label Atom) := ⟨.atom⟩
+instance : Bot (Formula Label Atom) := ⟨.false⟩
+instance : HasNot (Formula Label Atom) := ⟨.not⟩
+instance : HasOr (Formula Label Atom) := ⟨.or⟩
+
+/-- Truth. -/
+@[match_pattern]
+def Formula.true : Formula Label Atom := ¬⊥
+
+instance : Top (Formula Label Atom) := ⟨Formula.true⟩
+
+/-- Conjunction. -/
+@[match_pattern]
+def Formula.and (φ₁ φ₂ : Formula Label Atom) := ¬(¬φ₁ ∨ ¬φ₂)
+
+instance : HasAnd (Formula Label Atom) := ⟨Formula.and⟩
+
+/-- Implication. -/
+@[match_pattern]
+def Formula.imp (φ₁ φ₂ : Formula Label Atom) := ¬φ₁ ∨ φ₂
+
+instance : HasImp (Formula Label Atom) := ⟨Formula.imp⟩
+
+/-- Bi-implication. -/
+@[match_pattern]
+def Formula.iff (φ₁ φ₂ : Formula Label Atom) := (φ₁ → φ₂) ∧ (φ₂ → φ₁)
+
+instance : HasIff (Formula Label Atom) := ⟨Formula.iff⟩
+
+@[scoped grind =]
+lemma Formula.true_def : Formula.true (Label := Label) (Atom := Atom) = ⊤ := rfl
+
+@[scoped grind =]
+lemma Formula.and_def (φ₁ φ₂ : Formula Label Atom) : φ₁.and φ₂ = (φ₁ ∧ φ₂) := rfl
+
+@[scoped grind =]
+lemma Formula.imp_def (φ₁ φ₂ : Formula Label Atom) : φ₁.imp φ₂ = (φ₁ → φ₂) := rfl
+
+@[scoped grind =]
+lemma Formula.iff_def (φ₁ φ₂ : Formula Label Atom) : φ₁.iff φ₂ = (φ₁ ↔ φ₂) := rfl
+
+/-! ## Dynamic modalities -/
 
 /-- PDL diamond modality: after some execution of `a` we reach a state satisfying `φ`. -/
-def diamond (a : Program Label Atom) (φ : Formula Label Atom) : Formula Label Atom :=
-  .triangle a.shape (Sum.elim a.tests (fun _ => φ))
+abbrev diamond (a : Program Label Atom) (φ : Formula Label Atom) : Formula Label Atom :=
+  .diamond a φ
 
 instance : HasDynamicDiamond (Formula Label Atom) (Program Label Atom) := ⟨diamond⟩
 
@@ -133,106 +203,190 @@ scoped notation "?' " ψ:arg => test ψ
 /-- Notation for sequential composition `Program.seq`. -/
 scoped infixr:70 " ;' " => seq
 
-/-- Notation for non-deterministic choice `Program.seq`. -/
+/-- Notation for non-deterministic choice `Program.union`. -/
 instance : Union (Program Label Atom) := ⟨union⟩
 
 /-- Notation for the iteration operator `Program.star`. -/
 scoped postfix:max "*" => star
 
+/-! ## Equivalence with `Modal.Proposition`
+
+`Modal.Proposition (signature Label) Atom` represents a program by its shape and a map
+from the test positions to propositions.  We translate between the two representations and
+show that they are inverses. -/
+
+/-- Rebuild a program from a shape and its test formulas. -/
+def Program.fromShape : (s : Shape Label) → (Tests s → Formula Label Atom) → Program Label Atom
+  | .action n, _ => .action n
+  | .test, ts => .test (ts ())
+  | .seq s t, ts => .seq (fromShape s (ts ∘ Sum.inl)) (fromShape t (ts ∘ Sum.inr))
+  | .union s t, ts => .union (fromShape s (ts ∘ Sum.inl)) (fromShape t (ts ∘ Sum.inr))
+  | .star s, ts => .star (fromShape s ts)
+
+mutual
+/-- View a formula as a modal proposition over the PDL signature. -/
+def Formula.toProposition (φ : Formula Label Atom) : Proposition (signature Label) Atom :=
+  match φ with
+  | .atom p => .atom p
+  | .false => .false
+  | .not φ => .not φ.toProposition
+  | .or φ ψ => .or φ.toProposition ψ.toProposition
+  | .diamond a φ =>
+    let ⟨s, ts⟩ := Program.toPropositionTests a
+    .triangle s (Sum.elim ts (fun _ => φ.toProposition))
+
+/-- The shape and test propositions of a program. -/
+def Program.toPropositionTests (a : Program Label Atom) :
+    Sigma (fun s : Shape Label => Tests s → Proposition (signature Label) Atom) :=
+  match a with
+  | .action n => ⟨.action n, Empty.elim⟩
+  | .test ψ => ⟨.test, fun _ => ψ.toProposition⟩
+  | .seq a b =>
+    let ⟨sa, ta⟩ := a.toPropositionTests
+    let ⟨sb, tb⟩ := b.toPropositionTests
+    ⟨.seq sa sb, Sum.elim ta tb⟩
+  | .union a b =>
+    let ⟨sa, ta⟩ := a.toPropositionTests
+    let ⟨sb, tb⟩ := b.toPropositionTests
+    ⟨.union sa sb, Sum.elim ta tb⟩
+  | .star a =>
+    let ⟨sa, ta⟩ := a.toPropositionTests
+    ⟨.star sa, ta⟩
+end
+
+/-- Translate a `Modal.Proposition` over the PDL signature back into a PDL formula. -/
+def Formula.ofProposition (ψ : Proposition (signature Label) Atom) : Formula Label Atom :=
+  match ψ with
+  | .atom p => .atom p
+  | .false => .false
+  | .not φ => .not (Formula.ofProposition φ)
+  | .or φ ψ => .or (Formula.ofProposition φ) (Formula.ofProposition ψ)
+  | .triangle s φs =>
+    .diamond (Program.fromShape s (fun t => Formula.ofProposition (φs (.inl t))))
+      (Formula.ofProposition (φs (.inr ())))
+
+/-- Translating a program to modal propositions and back gives the original program. -/
+theorem Program.toPropositionTests_fromShape (s : Shape Label) (ts : Tests s → Formula Label Atom) :
+    Program.toPropositionTests (Program.fromShape s ts) =
+      ⟨s, fun t => (ts t).toProposition⟩ := by
+  induction s with
+  | action n =>
+    rw [Program.fromShape, Program.toPropositionTests]
+    apply Sigma.ext
+    · rfl
+    · apply heq_of_eq
+      funext t
+      exact t.elim
+  | test =>
+    rw [Program.fromShape, Program.toPropositionTests]
+  | seq s t ihs iht =>
+    rw [Program.fromShape]
+    simp only [Program.toPropositionTests]
+    rw [ihs (ts ∘ Sum.inl), iht (ts ∘ Sum.inr)]
+    apply Sigma.ext
+    · rfl
+    · apply heq_of_eq
+      funext i
+      cases i <;> rfl
+  | union s t ihs iht =>
+    rw [Program.fromShape]
+    simp only [Program.toPropositionTests]
+    rw [ihs (ts ∘ Sum.inl), iht (ts ∘ Sum.inr)]
+    apply Sigma.ext
+    · rfl
+    · apply heq_of_eq
+      funext i
+      cases i <;> rfl
+  | star s ihs =>
+    rw [Program.fromShape]
+    have h := ihs (show Tests s → Formula Label Atom from ts)
+    simpa only [Program.toPropositionTests] using
+      congrArg (fun p : Sigma (fun s' : Shape Label =>
+        Tests s' → Proposition (signature Label) Atom) =>
+        (⟨Shape.star p.fst, p.snd⟩ : Sigma (fun s' : Shape Label =>
+          Tests s' → Proposition (signature Label) Atom))) h
+
+@[simp]
+theorem Formula.ofProposition_toProposition (φ : Formula Label Atom) :
+    Formula.ofProposition φ.toProposition = φ := by
+  refine Formula.rec
+    (motive_1 := fun φ => Formula.ofProposition φ.toProposition = φ)
+    (motive_2 := fun a =>
+      Program.fromShape (Program.toPropositionTests a).1
+        (fun t => Formula.ofProposition ((Program.toPropositionTests a).2 t)) = a)
+    ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ φ
+  · intro p; rfl
+  · rfl
+  · intro φ ih; rw [Formula.toProposition, Formula.ofProposition, ih]
+  · intro φ ψ ihφ ihψ; rw [Formula.toProposition, Formula.ofProposition, ihφ, ihψ]
+  · intro a φ iha ihφ
+    rw [Formula.toProposition, Formula.ofProposition]
+    simp only [Sum.elim_inl, Sum.elim_inr]
+    rw [iha, ihφ]
+  · intro n; rfl
+  · intro ψ ih
+    rw [Program.toPropositionTests, Program.fromShape, ih]
+  · intro a b iha ihb
+    rw [Program.toPropositionTests, Program.fromShape]
+    apply congrArg₂ Program.seq
+    · change Program.fromShape (Program.toPropositionTests a).1
+          (fun t => Formula.ofProposition ((Program.toPropositionTests a).2 t)) = a
+      exact iha
+    · change Program.fromShape (Program.toPropositionTests b).1
+          (fun t => Formula.ofProposition ((Program.toPropositionTests b).2 t)) = b
+      exact ihb
+  · intro a b iha ihb
+    rw [Program.toPropositionTests, Program.fromShape]
+    apply congrArg₂ Program.union
+    · change Program.fromShape (Program.toPropositionTests a).1
+          (fun t => Formula.ofProposition ((Program.toPropositionTests a).2 t)) = a
+      exact iha
+    · change Program.fromShape (Program.toPropositionTests b).1
+          (fun t => Formula.ofProposition ((Program.toPropositionTests b).2 t)) = b
+      exact ihb
+  · intro a iha
+    simp only [Program.toPropositionTests, Program.fromShape]
+    exact congrArg Program.star iha
+
+@[simp]
+theorem Formula.toProposition_ofProposition (ψ : Proposition (signature Label) Atom) :
+    Formula.toProposition (Formula.ofProposition ψ) = ψ := by
+  induction ψ with
+  | atom p => rfl
+  | false => rfl
+  | not φ ih => rw [Formula.ofProposition, Formula.toProposition, ih]
+  | or φ ψ ihφ ihψ => rw [Formula.ofProposition, Formula.toProposition, ihφ, ihψ]
+  | triangle s φs ih =>
+    rw [Formula.ofProposition, Formula.toProposition]
+    rw [Program.toPropositionTests_fromShape]
+    simp only
+    apply congrArg (Proposition.triangle s)
+    funext i
+    cases i with
+    | inl t => exact ih (.inl t)
+    | inr u => exact ih (.inr u)
+
+/-- PDL formulas are equivalent to modal propositions over the PDL signature. -/
+def Formula.equivProposition : Formula Label Atom ≃ Proposition (signature Label) Atom where
+  toFun := Formula.toProposition
+  invFun := Formula.ofProposition
+  left_inv := Formula.ofProposition_toProposition
+  right_inv := Formula.toProposition_ofProposition
+
 /-! ## Induction Principles
 
-Because `Program` and `Formula` are not defined as a mutual inductive type, we provide
-induction principles with two motives, one for `Formula` and one for `Program`, that look as
-if they were. The modal case for formulas is `d⟨a⟩φ` instead of `Proposition.triangle`.
-Both `Formula.induction` and `Program.induction` take the same hypotheses and can be used via
+`Formula` and `Program` are a mutual inductive, so their recursors already take one motive
+for each type.  The names `Formula.induction` and `Program.induction` keep the established
+API: both take the same ten hypotheses and can be used via
 `induction φ using Formula.induction (motive_2 := ...)` and
-`induction a using Program.induction (motive_1 := ...)`, respectively.
-The other motive must be given explicitly, because `induction` only infers the main one.
--/
-
-/-- Helper for `Formula.induction` and `Program.induction`: induction on the shape of a program,
-given that we already have the formula motive for all test formulas. -/
-def Program.inductionOnShape
-    {motive_1 : Formula Label Atom → Sort w} {motive_2 : Program Label Atom → Sort w}
-    (action : ∀ n, motive_2 (PDL.action n))
-    (test : ∀ ψ, motive_1 ψ → motive_2 (PDL.test ψ))
-    (seq : ∀ a b, motive_2 a → motive_2 b → motive_2 (PDL.seq a b))
-    (union : ∀ a b, motive_2 a → motive_2 b → motive_2 (PDL.union a b))
-    (star : ∀ a, motive_2 a → motive_2 (PDL.star a))
-    (s : Shape Label) (ts : Tests s → Formula Label Atom) (ih : ∀ t, motive_1 (ts t)) :
-    motive_2 ⟨s, ts⟩ :=
-  match s with
-  | .action n => by
-    have : ts = Empty.elim := funext (fun t => t.elim)
-    subst this
-    exact action n
-  | .test => test (ts ()) (ih ())
-  | .seq a b  => by
-    let iha := Program.inductionOnShape action test seq union star a
-    let ihb := Program.inductionOnShape action test seq union star b
-    have h := seq _ _ (iha (ts ∘ .inl) (fun t => ih _)) (ihb (ts ∘ .inr) (fun t => ih _))
-    rwa [show ts = Sum.elim (ts ∘ .inl) (ts ∘ .inr) from funext fun x => by rcases x <;> rfl]
-  | .union a b => by
-    let iha := Program.inductionOnShape action test seq union star a
-    let ihb := Program.inductionOnShape action test seq union star b
-    have h := union _ _ (iha (ts ∘ .inl) (fun t => ih _)) (ihb (ts ∘ .inr) (fun t => ih _))
-    rwa [show ts = Sum.elim (ts ∘ .inl) (ts ∘ .inr) from funext fun x => by rcases x <;> rfl]
-  | .star a =>
-    let iha := Program.inductionOnShape action test seq union star a
-    star _ (iha ts ih)
+`induction a using Program.induction (motive_1 := ...)`, respectively. -/
 
 /-- Induction principle for PDL formulas, with a second motive for programs. -/
 @[elab_as_elim]
-def Formula.induction
-    {motive_1 : Formula Label Atom → Sort w} {motive_2 : Program Label Atom → Sort w}
-    (atom : ∀ p : Atom, motive_1 (.atom p))
-    (false : motive_1 ⊥)
-    (not : ∀ φ, motive_1 φ → motive_1 (¬φ))
-    (or : ∀ φ ψ, motive_1 φ → motive_1 ψ → motive_1 (φ ∨ ψ))
-    (diamond : ∀ a φ, motive_2 a → motive_1 φ → motive_1 (d⟨a⟩φ))
-    (action : ∀ n, motive_2 (PDL.action n))
-    (test : ∀ ψ, motive_1 ψ → motive_2 (PDL.test ψ))
-    (seq : ∀ a b, motive_2 a → motive_2 b → motive_2 (PDL.seq a b))
-    (union : ∀ a b, motive_2 a → motive_2 b → motive_2 (PDL.union a b))
-    (star : ∀ a, motive_2 a → motive_2 (PDL.star a))
-    (φ : Formula Label Atom) : motive_1 φ :=
-  match φ with
-  | .atom p => atom p
-  | .false => false
-  | .not φ =>
-      let ih := Formula.induction atom false not or diamond action test seq union star φ
-      not φ ih
-  | .or φ ψ =>
-      let ihφ := Formula.induction atom false not or diamond action test seq union star φ
-      let ihψ := Formula.induction atom false not or diamond action test seq union star ψ
-      or φ ψ ihφ ihψ
-  | .triangle op φs => by
-      let ih := fun i =>
-        Formula.induction atom false not or diamond action test seq union star (φs i)
-      have h : φs = Sum.elim (φs ∘ .inl) (fun _ => φs (.inr ())) := by
-        funext x
-        rcases x with _ | ⟨⟩ <;> rfl
-      rw [h]
-      exact diamond ⟨op, φs ∘ .inl⟩ _
-        (Program.inductionOnShape action test seq union star op _ (fun t => ih (.inl t)))
-        (ih (.inr ()))
+noncomputable def Formula.induction := @Formula.rec
 
 /-- Induction principle for PDL programs, with a second motive for formulas. -/
 @[elab_as_elim]
-def Program.induction
-    {motive_1 : Formula Label Atom → Sort w} {motive_2 : Program Label Atom → Sort w}
-    (atom : ∀ p : Atom, motive_1 (.atom p))
-    (false : motive_1 ⊥)
-    (not : ∀ φ, motive_1 φ → motive_1 (¬φ))
-    (or : ∀ φ ψ, motive_1 φ → motive_1 ψ → motive_1 (φ ∨ ψ))
-    (diamond : ∀ a φ, motive_2 a → motive_1 φ → motive_1 (d⟨a⟩φ))
-    (action : ∀ n, motive_2 (PDL.action n))
-    (test : ∀ ψ, motive_1 ψ → motive_2 (PDL.test ψ))
-    (seq : ∀ a b, motive_2 a → motive_2 b → motive_2 (PDL.seq a b))
-    (union : ∀ a b, motive_2 a → motive_2 b → motive_2 (PDL.union a b))
-    (star : ∀ a, motive_2 a → motive_2 (PDL.star a))
-    (a : Program Label Atom) : motive_2 a :=
-  Program.inductionOnShape action test seq union star a.shape a.tests fun t =>
-    Formula.induction atom false not or diamond action test seq union star (a.tests t)
+noncomputable def Program.induction := @Program.rec
 
 end Cslib.Logic.Modal.PDL
